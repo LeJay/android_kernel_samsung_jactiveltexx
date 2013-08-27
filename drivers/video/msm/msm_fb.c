@@ -139,7 +139,7 @@ struct dentry *msm_fb_debugfs_file[MSM_FB_MAX_DBGFS];
 static int bl_scale, bl_min_lvl;
 
 DEFINE_MUTEX(msm_fb_notify_update_sem);
-static DEFINE_MUTEX(power_state_chagne);
+DEFINE_MUTEX(power_state_chagne);
 
 void msmfb_no_update_notify_timer_cb(unsigned long data)
 {
@@ -1395,6 +1395,7 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 	var->yres = panel_info->yres;
 	
 #ifdef CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT
+	|| defined (CONFIG_FB_MSM_MIPI_RENESAS_TFT_VIDEO_FULL_HD_PT_PANEL)
 	var->height = panel_info->height; /* height of picture in mm*/
 	var->width = panel_info->width; /* width of picture in mm*/
 #else
@@ -4149,6 +4150,7 @@ static int msm_fb_ioctl(struct fb_info *info, unsigned int cmd,
 
 		ret = msmfb_handle_pp_ioctl(mfd, &mdp_pp);
 		break;
+
 	case MSMFB_BUFFER_SYNC:
 		sec_debug_mdp_set_value(SEC_DEBUG_BUFFER_SYNC, SEC_DEBUG_IN);
 		ret = copy_from_user(&buf_sync, argp, sizeof(buf_sync));

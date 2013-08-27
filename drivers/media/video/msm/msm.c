@@ -1437,6 +1437,8 @@ static struct v4l2_subdev *msm_eeprom_probe(
 
 	D("%s called\n", __func__);
 
+#if !(defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR))
+
 	if (!eeprom_info || !eeprom_info->board_info)
 		goto probe_fail;
 
@@ -1451,6 +1453,38 @@ static struct v4l2_subdev *msm_eeprom_probe(
 	eeprom_sdev = (struct v4l2_subdev *)i2c_get_clientdata(eeprom_client);
 	if (eeprom_sdev == NULL)
 		goto client_fail;
+#else
+	if (!eeprom_info){
+            D("[%s::eeprom_info] fail!!\n", __func__);
+            goto probe_fail;
+       }
+	if (eeprom_info->type == MSM_EEPROM_SPI){
+            D("[%s::eeprom_info->type ] fail!!\n", __func__);
+            goto probe_fail;
+       }
+	if (!eeprom_info || !eeprom_info->board_info){
+            D("[%s::eeprom_info->board_info] fail!!\n", __func__);
+            goto probe_fail;
+       }
+
+	adapter = i2c_get_adapter(eeprom_info->bus_id);
+	if (!adapter){
+            D("[%s::adapter] fail!!\n", __func__);        
+            goto probe_fail;
+       }
+
+	eeprom_client = i2c_new_device(adapter, eeprom_info->board_info);
+	if (!eeprom_client){
+            D("[%s::adapter] fail!!\n", __func__);        
+            goto device_fail;
+       }
+
+	eeprom_sdev = (struct v4l2_subdev *)i2c_get_clientdata(eeprom_client);
+	if (eeprom_sdev == NULL){
+            D("[%s::adapter] fail!!\n", __func__);        
+            goto client_fail;
+       }
+#endif
 
 	return eeprom_sdev;
 client_fail:
