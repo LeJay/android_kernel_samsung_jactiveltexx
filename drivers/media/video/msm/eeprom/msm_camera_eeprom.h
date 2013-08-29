@@ -38,6 +38,20 @@ struct msm_camera_eeprom_fn_t {
 		(struct msm_eeprom_ctrl_t*, uint32_t*);
 	void (*eeprom_format_data)
 		(void);
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+	int32_t (*eeprom_read)
+		(struct msm_eeprom_ctrl_t *ectrl,
+		 uint32_t reg_addr, void *data, uint32_t num_byte);
+	int32_t (*eeprom_direct_data_read)
+		(struct msm_eeprom_ctrl_t *ectrl,
+		 struct eeprom_data_access_t *data_access);
+	int32_t (*eeprom_direct_data_write)
+		(struct msm_eeprom_ctrl_t *ectrl,
+		 struct eeprom_data_access_t *data_access);
+	int32_t (*eeprom_direct_data_erase)
+		(struct msm_eeprom_ctrl_t *ectrl,
+		 struct eeprom_data_access_t *data_access);
+#endif
 };
 
 struct msm_camera_eeprom_read_t {
@@ -66,7 +80,17 @@ struct msm_eeprom_ctrl_t {
 	uint16_t read_tbl_size;
 	struct msm_camera_eeprom_data_t *data_tbl;
 	uint16_t data_tbl_size;
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+	struct spi_device *spi;
+#endif
 };
+
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+extern void imx175_eeprom_init(void);
+
+int32_t msm_camera_eeprom_read_tbl(struct msm_eeprom_ctrl_t *ectrl,
+	struct msm_camera_eeprom_read_t *read_tbl, uint16_t tbl_size);
+#endif
 
 int32_t msm_camera_eeprom_get_data(struct msm_eeprom_ctrl_t *ectrl,
 	struct msm_eeprom_data_t *edata);

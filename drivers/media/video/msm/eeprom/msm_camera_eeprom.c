@@ -18,7 +18,12 @@ int32_t msm_camera_eeprom_read(struct msm_eeprom_ctrl_t *ectrl,
 	int rc = 0;
 	if (ectrl->func_tbl.eeprom_set_dev_addr != NULL)
 		ectrl->func_tbl.eeprom_set_dev_addr(ectrl, &reg_addr);
-
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+	if (ectrl->func_tbl.eeprom_read != NULL) {
+		rc = ectrl->func_tbl.eeprom_read(ectrl, reg_addr,
+			data, num_byte);
+	} else {
+#endif
 	if (!convert_endian) {
 		rc = msm_camera_i2c_read_seq(
 			&ectrl->i2c_client, reg_addr, data, num_byte);
@@ -33,6 +38,9 @@ int32_t msm_camera_eeprom_read(struct msm_eeprom_ctrl_t *ectrl,
 			data_ptr[i+1] = buf[i];
 		}
 	}
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+	}
+#endif
 	return rc;
 }
 
@@ -43,7 +51,9 @@ int32_t msm_camera_eeprom_read_tbl(struct msm_eeprom_ctrl_t *ectrl,
 	CDBG("%s: open\n", __func__);
 	if (read_tbl == NULL)
 		return rc;
-
+#if defined(CONFIG_IMX175)
+	imx175_spi_read_id(ectrl);
+#endif
 	for (i = 0; i < tbl_size; i++) {
 		rc = msm_camera_eeprom_read
 			(ectrl, read_tbl[i].reg_addr,
@@ -63,6 +73,15 @@ int32_t msm_camera_eeprom_get_info(struct msm_eeprom_ctrl_t *ectrl,
 {
 	int rc = 0;
 	CDBG("%s: open\n", __func__);
+
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+	msm_camera_eeprom_read_tbl(ectrl,
+		ectrl->read_tbl,	
+		ectrl->read_tbl_size);
+
+	ectrl->func_tbl.eeprom_format_data();
+#endif
+
 	memcpy(einfo, ectrl->info, ectrl->info_size);
 	CDBG("%s: done =%d\n", __func__, rc);
 	return rc;
@@ -119,6 +138,43 @@ int32_t msm_eeprom_config(struct msm_eeprom_ctrl_t *e_ctrl,
 			sizeof(struct msm_eeprom_cfg_data)))
 			rc = -EFAULT;
 		break;
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+	case CFG_EEPROM_DIRECT_DATA_READ:
+		if (e_ctrl->func_tbl.eeprom_direct_data_read == NULL) {
+			rc = -EFAULT;
+			break;
+		}
+		rc = e_ctrl->func_tbl.eeprom_direct_data_read(e_ctrl,
+			&cdata.cfg.direct_access);
+
+		if (copy_to_user((void *)argp,
+			&cdata,
+			sizeof(struct msm_eeprom_cfg_data)))
+			rc = -EFAULT;
+		break;
+	case CFG_EEPROM_DIRECT_DATA_WRITE:
+		if (e_ctrl->func_tbl.eeprom_direct_data_write == NULL) {
+			rc = -EFAULT;
+			break;
+		}
+		rc = e_ctrl->func_tbl.eeprom_direct_data_write(e_ctrl,
+			&cdata.cfg.direct_access);
+
+		if (copy_to_user((void *)argp,
+			&cdata,
+			sizeof(struct msm_eeprom_cfg_data)))
+			rc = -EFAULT;
+		break;
+	case CFG_EEPROM_DIRECT_DATA_ERASE:
+		if (e_ctrl->func_tbl.eeprom_direct_data_erase == NULL) {
+			rc = -EFAULT;
+			break;
+		}
+		rc = e_ctrl->func_tbl.eeprom_direct_data_erase(e_ctrl,
+			&cdata.cfg.direct_access);
+
+		break;
+#endif
 	default:
 		break;
 	}

@@ -30,6 +30,9 @@ static struct msm_actuator *actuators[] = {
 #endif
 };
 
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+bool is_af_final = false;
+#endif
 static int32_t msm_actuator_piezo_set_default_focus(
 	struct msm_actuator_ctrl_t *a_ctrl,
 	struct msm_actuator_move_params_t *move_params)
@@ -538,6 +541,12 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 			pr_err("%s move focus failed %d\n", __func__, rc);
 		break;
 
+#if defined(CONFIG_MACH_JACTIVE_ATT) || defined(CONFIG_MACH_JACTIVE_EUR)
+	case CFG_FINAL_AF:
+		is_af_final = true;
+		pr_err("%s evan : kernel side - is_af_final= %d\n", __func__, is_af_final);
+		break;
+#endif
 	default:
 		break;
 	}
