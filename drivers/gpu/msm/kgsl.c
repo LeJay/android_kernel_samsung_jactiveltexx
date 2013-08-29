@@ -253,6 +253,7 @@ kgsl_mem_entry_track_gpuaddr(struct kgsl_process_private *process,
 	struct rb_node **node;
 	struct rb_node *parent = NULL;
 
+	assert_spin_locked(&process->mem_lock);
 	/*
 	 * If cpu=gpu map is used then caller needs to set the
 	 * gpu address
@@ -261,7 +262,7 @@ kgsl_mem_entry_track_gpuaddr(struct kgsl_process_private *process,
 		if (!entry->memdesc.gpuaddr)
 			goto done;
 	} else if (entry->memdesc.gpuaddr) {
-		WARN(1, "gpuaddr assigned w/o holding memory lock\n");
+		WARN_ONCE(1, "gpuaddr assigned w/o holding memory lock\n");
 		ret = -EINVAL;
 		goto done;
 	}
@@ -292,10 +293,19 @@ done:
 	return ret;
 }
 
+/**
+ * kgsl_mem_entry_untrack_gpuaddr() - Untrack memory that is previously tracked
+ * process - Pointer to process private to which memory belongs
+ * entry - Memory entry to untrack
+ *
+ * Function just does the opposite of kgsl_mem_entry_track_gpuaddr. Needs to be
+ * called with processes spin lock held
+ */
 static void
 kgsl_mem_entry_untrack_gpuaddr(struct kgsl_process_private *process,
 				struct kgsl_mem_entry *entry)
 {
+	assert_spin_locked(&process->mem_lock);
 	if (entry->memdesc.gpuaddr) {
 		kgsl_mmu_put_gpuaddr(process->pagetable, &entry->memdesc);
 		rb_erase(&entry->node, &entry->priv->mem_rb);
@@ -612,23 +622,32 @@ end:
 
 static int kgsl_resume_device(struct kgsl_device *device)
 {
-	int status = -EINVAL;
-
 	if (!device)
 		return -EINVAL;
 
 	KGSL_PWR_WARN(device, "resume start\n");
 	mutex_lock(&device->mutex);
 	if (device->state == KGSL_STATE_SUSPEND) {
-		kgsl_pwrctrl_set_state(device, KGSL_STATE_SLUMBER);
-		status = 0;
 		complete_all(&device->hwaccess_gate);
+	} else {
+		/*
+		 * This is an error situation,so wait for the device
+		 * to idle and then put the device to SLUMBER state.
+		 * This will put the device to the right state when
+		 * we resume.
+		 */
+		device->ftbl->idle(device);
+		kgsl_pwrctrl_request_state(device, KGSL_STATE_SLUMBER);
+		kgsl_pwrctrl_sleep(device);
+		KGSL_PWR_ERR(device,
+			"resume invoked without a suspend\n");
 	}
+	kgsl_pwrctrl_set_state(device, KGSL_STATE_SLUMBER);
 	kgsl_pwrctrl_request_state(device, KGSL_STATE_NONE);
 
 	mutex_unlock(&device->mutex);
 	KGSL_PWR_WARN(device, "resume end\n");
-	return status;
+	return 0;
 }
 
 static int kgsl_suspend(struct device *dev)
@@ -706,6 +725,7 @@ void kgsl_late_resume_driver(struct early_suspend *h)
 	device->pwrctrl.restore_slumber = false;
 	if (device->pwrscale.policy == NULL)
 		kgsl_pwrctrl_pwrlevel_change(device, KGSL_PWRLEVEL_TURBO);
+
 	if (kgsl_pwrctrl_wake(device) != 0) {
 		mutex_unlock(&device->mutex);
 		return;
@@ -726,7 +746,7 @@ void kgsl_late_resume_driver(struct early_suspend *h)
 	}
 
 	mutex_unlock(&device->mutex);
-	KGSL_PWR_WARN(device, "late resume end\n");
+	KGSL_PWR_ERR(device, "late resume end\n");
 }
 EXPORT_SYMBOL(kgsl_late_resume_driver);
 
@@ -836,7 +856,7 @@ kgsl_find_process_private(struct kgsl_device_private *cur_dev_priv)
 
 	kref_init(&private->refcount);
 
-	private->pid = task_tgid_nr(current);
+    private->pid = task_tgid_nr(current);
 	spin_lock_init(&private->mem_lock);
 	mutex_init(&private->process_private_mutex);
 	/* Add the newly created process struct obj to the process list */
@@ -862,10 +882,15 @@ kgsl_get_process_private(struct kgsl_device_private *cur_dev_priv)
 
 	mutex_lock(&private->process_private_mutex);
 
-	if (!private->mem_rb.rb_node) {
-		private->mem_rb = RB_ROOT;
-		idr_init(&private->mem_idr);
-	}
+	/*
+	 * If debug root initialized then it means the rest of the fields
+	 * are also initialized
+	 */
+	if (private->debug_root)
+		goto done;
+
+	private->mem_rb = RB_ROOT;
+	idr_init(&private->mem_idr);
 
 	if ((!private->pagetable) && kgsl_mmu_enabled()) {
 		unsigned long pt_name;
@@ -880,11 +905,10 @@ kgsl_get_process_private(struct kgsl_device_private *cur_dev_priv)
 		}
 	}
 
-	if (!private->kobj.parent)
-		kgsl_process_init_sysfs(private);
-	if (!private->debug_root)
-		kgsl_process_init_debugfs(private);
+	kgsl_process_init_sysfs(private);
+	kgsl_process_init_debugfs(private);
 
+done:
 	mutex_unlock(&private->process_private_mutex);
 
 	return private;
@@ -1084,6 +1108,7 @@ kgsl_sharedmem_find_region(struct kgsl_process_private *private,
 			return NULL;
 		}
 	}
+	spin_unlock(&private->mem_lock);
 
 	spin_unlock(&private->mem_lock);
 
@@ -1114,7 +1139,8 @@ kgsl_sharedmem_find(struct kgsl_process_private *private, unsigned int gpuaddr)
  * @size: length of the region.
  *
  * Checks that there are no existing allocations within an address
- * region.
+ * region. This function should be called with processes spin lock
+ * held.
  */
 static int
 kgsl_sharedmem_region_empty(struct kgsl_process_private *private,
@@ -1124,6 +1150,8 @@ kgsl_sharedmem_region_empty(struct kgsl_process_private *private,
 	unsigned int gpuaddr_end = gpuaddr + size;
 
 	struct rb_node *node;
+
+	assert_spin_locked(&private->mem_lock);
 
 	if (!kgsl_mmu_gpuaddr_in_range(gpuaddr))
 		return 0;
@@ -1499,7 +1527,7 @@ static long _cmdstream_freememontimestamp(struct kgsl_device_private *dev_priv,
 		return -EINVAL;
 	}
 	if (!kgsl_mem_entry_set_pend(entry)) {
-		KGSL_DRV_ERR(dev_priv->device,
+		KGSL_DRV_WARN(dev_priv->device,
 		"Cannot set pending bit for gpuaddr %08x\n", gpuaddr);
 		kgsl_mem_entry_put(entry);
 		return -EBUSY;
@@ -1603,9 +1631,10 @@ static long kgsl_ioctl_sharedmem_free(struct kgsl_device_private *dev_priv,
 				param->gpuaddr);
 		return -EINVAL;
 	}
+
 	if (!kgsl_mem_entry_set_pend(entry)) {
 		kgsl_mem_entry_put(entry);
-		return -EINVAL;
+		return -EBUSY;
 	}
 
 	trace_kgsl_mem_free(entry);
@@ -1615,6 +1644,11 @@ static long kgsl_ioctl_sharedmem_free(struct kgsl_device_private *dev_priv,
 				    entry->memdesc.size,
 				    entry->memdesc.flags);
 
+	/*
+	 * First kgsl_mem_entry_put is for the reference that we took in
+	 * this function when calling kgsl_sharedmem_find, second one is
+	 * to free the memory since this is a free ioctl
+	 */
 	kgsl_mem_entry_put(entry);
 	kgsl_mem_entry_put(entry);
 	return 0;
@@ -1636,12 +1670,17 @@ static long kgsl_ioctl_gpumem_free_id(struct kgsl_device_private *dev_priv,
 
 	if (!kgsl_mem_entry_set_pend(entry)) {
 		kgsl_mem_entry_put(entry);
-		return -EINVAL;
+		return -EBUSY;
 	}
 
 	trace_kgsl_mem_free(entry);
 
-	kgsl_mem_entry_put(entry);
+	/*
+	 * First kgsl_mem_entry_put is for the reference that we took in
+	 * this function when calling kgsl_sharedmem_find_id, second one is
+	 * to free the memory since this is a free ioctl
+	 */
+    kgsl_mem_entry_put(entry);
 	kgsl_mem_entry_put(entry);
 	return 0;
 }
@@ -2229,7 +2268,6 @@ kgsl_ioctl_sharedmem_flush_cache(struct kgsl_device_private *dev_priv,
 				param->gpuaddr);
 		return -EINVAL;
 	}
-
 	ret = _kgsl_gpumem_sync_cache(entry, KGSL_GPUMEM_CACHE_FLUSH);
 	kgsl_mem_entry_put(entry);
 	return ret;
@@ -2552,7 +2590,7 @@ static const struct {
 } kgsl_ioctl_funcs[] = {
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_DEVICE_GETPROPERTY,
 			kgsl_ioctl_device_getproperty,
-			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
+			KGSL_IOCTL_LOCK),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_DEVICE_WAITTIMESTAMP,
 			kgsl_ioctl_device_waittimestamp,
 			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
@@ -2570,13 +2608,13 @@ static const struct {
 			KGSL_IOCTL_LOCK),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP,
 			kgsl_ioctl_cmdstream_freememontimestamp,
-			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
+			KGSL_IOCTL_LOCK),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_CMDSTREAM_FREEMEMONTIMESTAMP_CTXTID,
 			kgsl_ioctl_cmdstream_freememontimestamp_ctxtid,
-			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
+			KGSL_IOCTL_LOCK),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_DRAWCTXT_CREATE,
 			kgsl_ioctl_drawctxt_create,
-			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
+			KGSL_IOCTL_LOCK),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_DRAWCTXT_DESTROY,
 			kgsl_ioctl_drawctxt_destroy,
 			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
@@ -2596,10 +2634,10 @@ static const struct {
 			kgsl_ioctl_cff_user_event, 0),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_TIMESTAMP_EVENT,
 			kgsl_ioctl_timestamp_event,
-			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
+			KGSL_IOCTL_LOCK),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_SETPROPERTY,
 			kgsl_ioctl_device_setproperty,
-			KGSL_IOCTL_LOCK | KGSL_IOCTL_WAKE),
+			KGSL_IOCTL_LOCK),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUMEM_ALLOC_ID,
 			kgsl_ioctl_gpumem_alloc_id, 0),
 	KGSL_IOCTL_FUNC(IOCTL_KGSL_GPUMEM_FREE_ID,
@@ -2868,6 +2906,7 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 		ret = -EBUSY;
 		goto put;
 	}
+
 	/*
 	 * The orig_len may not include guard page and we need a free slot that
 	 * includes the guard page
@@ -2896,7 +2935,7 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 			 */
 			if (!retry && (ret == (unsigned long)-ENOMEM)
 				&& (align > PAGE_SHIFT)) {
-				align = 0;
+				align = PAGE_SHIFT;
 				addr = 0;
 				len = orig_len;
 				retry = 1;
@@ -2909,7 +2948,7 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 
 		/*make sure there isn't a GPU only mapping at this address */
 		spin_lock(&private->mem_lock);
-		if (kgsl_sharedmem_region_empty(private, ret, len)) {
+		if (kgsl_sharedmem_region_empty(private, ret, orig_len)) {
 			int ret_val;
 			/*
 			 * We found a free memory map, claim it here with
@@ -2918,8 +2957,8 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 			entry->memdesc.gpuaddr = ret;
 			/* This should never fail */
 			ret_val = kgsl_mem_entry_track_gpuaddr(private, entry);
-			BUG_ON(ret_val);
 			spin_unlock(&private->mem_lock);
+			BUG_ON(ret_val);
 			/* map cannot be called with lock held */
 			ret_val = kgsl_mmu_map(private->pagetable,
 						&entry->memdesc);
@@ -2957,7 +2996,7 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 	} while (mmap_range_valid(addr, len));
 
 	if (IS_ERR_VALUE(ret))
-		KGSL_MEM_ERR(device,
+        KGSL_MEM_ERR(device,
 				"pid %d pgoff %lx len %ld failed error %ld\n",
 				private->pid, pgoff, len, ret);
 put:

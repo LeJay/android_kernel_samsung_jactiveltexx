@@ -86,10 +86,6 @@ adreno_ringbuffer_waitspace(struct adreno_ringbuffer *rb,
 			GSL_RB_GET_READPTR(rb, &rb->rptr);
 		} while (!rb->rptr);
 
-		rb->wptr++;
-
-		adreno_ringbuffer_submit(rb);
-
 		rb->wptr = 0;
 	}
 
@@ -855,10 +851,8 @@ static bool _parse_ibs(struct kgsl_device_private *dev_priv,
 					 buffer */
 	struct kgsl_mem_entry *entry;
 
-	spin_lock(&dev_priv->process_priv->mem_lock);
 	entry = kgsl_sharedmem_find_region(dev_priv->process_priv,
 					   gpuaddr, sizedwords * sizeof(uint));
-	spin_unlock(&dev_priv->process_priv->mem_lock);
 	if (entry == NULL) {
 		KGSL_CMD_ERR(dev_priv->device,
 			     "no mapping for gpuaddr: 0x%08x\n", gpuaddr);

@@ -40,6 +40,10 @@
 #include "msm_watchdog.h"
 #include "timer.h"
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+#include <asm/kexec.h>
+#endif
+
 #define WDT0_RST	0x38
 #define WDT0_EN		0x40
 #define WDT0_BARK_TIME	0x4C
@@ -200,6 +204,30 @@ static void cpu_power_off(void *data)
 		;
 }
 
+static int irq_enabled;
+static int status;
+
+int resout_irq_control(int enable)
+{
+	if (!irq_enabled)
+		return -1;
+
+	if (enable ^ status) {
+		if (enable) {
+			enable_irq(pmic_reset_irq);
+			status = 1;
+			pr_info("%s : %d\n", __func__, status);
+		} else {
+			disable_irq_nosync(pmic_reset_irq);
+			status = 0;
+			pr_info("%s : %d\n", __func__, status);
+		}
+	} else
+		return -1;
+
+	return 0;
+}
+
 static irqreturn_t resout_irq_handler(int irq, void *dev_id)
 {
 	pr_warn("%s PMIC Initiated shutdown\n", __func__);
@@ -338,7 +366,7 @@ void msm_restart(char mode, const char *cmd)
 		set_kernel_crash_magic_number();
 reset:
 #endif /* CONFIG_LGE_CRASH_HANDLER */
-#ifdef CONFIG_SEC_DEBUG
+#if 1
 	else {
 		printk(KERN_NOTICE "%s : clear reset flag\r\n", __func__);
 		__raw_writel(0x12345678, restart_reason);
@@ -373,13 +401,30 @@ static struct notifier_block dload_reboot_block = {
 };
 #endif
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+void msm_kexec_hardboot(void)
+{
+#if defined(CONFIG_MSM_DLOAD_MODE) && !defined(CONFIG_SEC_DEBUG)
+	/* Do not enter download mode on reboot. */
+	set_dload_mode(0);
+#endif
+
+	/* Set PM8XXX PMIC to reset on power off. */
+	pm8xxx_reset_pwr_off(1);
+
+	/* Reboot with the recovery kernel since the boot kernel decompressor may
+	 * not support the hardboot jump. */
+	__raw_writel(0x77665502, restart_reason);
+}
+#endif
+
 static int __init msm_pmic_restart_init(void)
 {
 	int rc;
 
 #ifdef CONFIG_MACH_JF_VZW
 	return 0;
-#else
+#elif defined(CONFIG_SEC_DEBUG)
 	if (kernel_sec_get_debug_level() != KERNEL_SEC_DEBUG_LEVEL_LOW)
 		return 0;
 #endif
@@ -390,6 +435,8 @@ static int __init msm_pmic_restart_init(void)
 					"restart_from_pmic", NULL);
 		if (rc < 0)
 			pr_err("pmic restart irq fail rc = %d\n", rc);
+		irq_enabled = 1;
+		status = 1;
 	} else {
 		pr_warn("no pmic restart interrupt specified\n");
 	}
@@ -427,6 +474,9 @@ static int __init msm_restart_init(void)
 	restart_reason = MSM_IMEM_BASE + RESTART_REASON_ADDR;
 #endif
 	pm_power_off = msm_power_off;
+#ifdef CONFIG_KEXEC_HARDBOOT
+	kexec_hardboot_hook = msm_kexec_hardboot;
+#endif
 
 	return 0;
 }

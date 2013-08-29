@@ -585,7 +585,19 @@ static int adreno_setup_pt(struct kgsl_device *device,
 	 */
 	device->mh.mpu_range = device->mmu.setstate_memory.gpuaddr +
 				device->mmu.setstate_memory.size;
-	return result;
+
+	if (adreno_is_a305(adreno_dev)) {
+		result = kgsl_mmu_map_global(pagetable,
+				&adreno_dev->on_resume_cmd);
+		if (result)
+			goto unmap_setstate_desc;
+		device->mh.mpu_range = device->mmu.setstate_memory.gpuaddr +
+				device->mmu.setstate_memory.size;
+	}
+    return result;
+
+unmap_setstate_desc:
+	kgsl_mmu_unmap(pagetable, &device->mmu.setstate_memory);
 
 unmap_memstore_desc:
 	kgsl_mmu_unmap(pagetable, &device->memstore);
@@ -1493,6 +1505,7 @@ adreno_probe(struct platform_device *pdev)
 		goto error_close_rb;
 
 	adreno_debugfs_init(device);
+	adreno_dev->on_resume_issueib = false;
 
 	kgsl_pwrscale_init(device);
 	kgsl_pwrscale_attach_policy(device, ADRENO_DEFAULT_PWRSCALE_POLICY);
@@ -1518,6 +1531,8 @@ static int __devexit adreno_remove(struct platform_device *pdev)
 
 	kgsl_pwrscale_detach_policy(device);
 	kgsl_pwrscale_close(device);
+	if (adreno_is_a305(adreno_dev))
+		kgsl_sharedmem_free(&adreno_dev->on_resume_cmd);
 
 	adreno_ringbuffer_close(&adreno_dev->ringbuffer);
 	kgsl_device_platform_remove(device);
@@ -1574,7 +1589,8 @@ static int adreno_init(struct kgsl_device *device)
 	 */
 	ft_detect_regs[0] = adreno_dev->gpudev->reg_rbbm_status;
 
-	adreno_perfcounter_init(device);
+	if (!adreno_is_a2xx(adreno_dev))
+		adreno_perfcounter_init(device);
 
 	/* Power down the device */
 	kgsl_pwrctrl_disable(device);
@@ -1624,6 +1640,18 @@ static int adreno_start(struct kgsl_device *device)
 		ft_detect_regs[11] = A3XX_RBBM_PERFCTR_SP_5_HI;
 	}
 
+	/*
+	 * Allocate some memory for A305 to do an extra draw on resume
+	 * from SLUMBER state.
+	 */
+	if (adreno_is_a305(adreno_dev) &&
+			adreno_dev->on_resume_cmd.hostptr == NULL) {
+		status = kgsl_allocate_contiguous(&adreno_dev->on_resume_cmd,
+					PAGE_SIZE);
+		if (status)
+			goto error_clk_off;
+        }
+
 	status = kgsl_mmu_start(device);
 	if (status)
 		goto error_clk_off;
@@ -1652,7 +1680,26 @@ static int adreno_start(struct kgsl_device *device)
 	if (KGSL_STATE_DUMP_AND_FT != device->state)
 		mod_timer(&device->idle_timer, jiffies + FIRST_TIMEOUT);
 
-	adreno_perfcounter_start(adreno_dev);
+	if (!adreno_is_a2xx(adreno_dev))
+		adreno_perfcounter_start(adreno_dev);
+	else {
+		unsigned int reg;
+
+		kgsl_regread(device, REG_RBBM_PM_OVERRIDE2, &reg);
+		kgsl_regwrite(device, REG_RBBM_PM_OVERRIDE2, (reg | 0x40));
+
+		/*
+		 * Select SP_ALU_INSTR_EXEC (0x85) to get number of
+		 * ALU instructions executed.
+		 */
+		kgsl_regwrite(device, REG_SQ_PERFCOUNTER3_SELECT, 0x85);
+
+		kgsl_regwrite(device, REG_CP_PERFMON_CNTL,
+			REG_PERF_MODE_CNT | REG_PERF_STATE_ENABLE);
+
+		ft_detect_regs[6] = REG_SQ_PERFCOUNTER3_LO;
+		ft_detect_regs[7] = REG_SQ_PERFCOUNTER3_HI;
+	}
 
 	device->reset_counter++;
 
@@ -2807,6 +2854,8 @@ static int adreno_suspend_context(struct kgsl_device *device)
 		adreno_drawctxt_switch(adreno_dev, NULL, 0);
 		status = adreno_idle(device);
 	}
+	if (adreno_is_a305(adreno_dev))
+		adreno_dev->on_resume_issueib = true;
 
 	return status;
 }

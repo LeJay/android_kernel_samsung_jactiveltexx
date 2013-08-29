@@ -39,6 +39,7 @@ VREG_CONSUMERS(L2) = {
 	REGULATOR_SUPPLY("dsi1_pll_vdda",	"mipi_dsi.1"),
 	REGULATOR_SUPPLY("HRD_VDDD_CDC_D",		"tabla2x-slim"),
 	REGULATOR_SUPPLY("HRD_CDC_VDDA_A_1P2V",	"tabla2x-slim"),
+	REGULATOR_SUPPLY("dsi_pll_vdda",	"mdp.0"),
 };
 VREG_CONSUMERS(L3) = {
 	REGULATOR_SUPPLY("8921_l3",		NULL),
@@ -291,6 +292,7 @@ VREG_CONSUMERS(LVS7) = {
 #endif
 	REGULATOR_SUPPLY("lvds_vdda",		"lvds.0"),
 	REGULATOR_SUPPLY("dsi1_vddio",		"mipi_dsi.1"),
+	REGULATOR_SUPPLY("dsi_pll_vddio",	"mdp.0"),
 	REGULATOR_SUPPLY("hdmi_vdda",		"hdmi_msm.0"),
 };
 VREG_CONSUMERS(USB_OTG) = {
@@ -863,14 +865,18 @@ apq8064_rpm_regulator_init_data[] __devinitdata = {
 	RPM_LDO(L15, 0, 1, 0, 1800000, 2950000, NULL,          0,     0),
 	RPM_LDO(L16, 0, 1, 0, 2800000, 3000000, NULL,          0,     0),
 	RPM_LDO(L17, 0, 1, 0, 1800000, 3300000, NULL,          0,     0),
+#if defined(CONFIG_MACH_JACTIVE_ATT)
+	RPM_LDO(L18, 0, 0, 0, 1100000, 1100000, "8921_s4",     0,     0),
+#else
 	RPM_LDO(L18, 1, 1, 0, 1100000, 1100000, "8921_s4",     0,     0),
+#endif
 	RPM_LDO(L21, 0, 1, 0, 1800000, 1800000, NULL,          0,     0),
 	RPM_LDO(L22, 0, 1, 0, 1800000, 1800000, NULL,          0,     0),
 	RPM_LDO(L23, 0, 1, 0, 1800000, 1800000, NULL,          0,     0),
 	RPM_LDO(L24, 0, 1, 1,  750000, 1150000, "8921_s1", 10000, 10000),
 	RPM_LDO(L25, 1, 1, 0, 1250000, 1250000, "8921_s1", 10000, 10000),
 	RPM_LDO(L27, 0, 0, 0, 1100000, 1100000, "8921_s7",     0,     0),
-	RPM_LDO(L28, 0, 1, 0, 1100000, 1100000, "8921_s7",     0,     0),
+	RPM_LDO(L28, 0, 1, 0, 1100000, 1200000, "8921_s7",     0,     0),
 	RPM_LDO(L29, 0, 1, 0, 1800000, 1800000, NULL,          0,     0),
 
 	/*     ID  a_on pd ss                   supply */
