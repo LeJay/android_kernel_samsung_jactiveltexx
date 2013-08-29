@@ -22,7 +22,6 @@
 #include <linux/mfd/pm8xxx/pm8821.h>
 #include "../../../arch/arm/mach-msm/board-8064.h"
 #include <linux/gpio.h>
-
 #if defined(CONFIG_FB_MDP4_ENHANCE)
 #include "mdp4_video_enhance.h"
 #elif defined(CONFIG_MDNIE_LITE_TUNING)
