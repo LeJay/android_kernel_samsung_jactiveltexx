@@ -208,7 +208,7 @@ static struct msm_camera_i2c_client s5k3h5xa_sensor_i2c_client = {
 #define QC_TEST	0
 
 int32_t s5k3h5xa_sensor_write_exp_gain(struct msm_sensor_ctrl_t *s_ctrl,
-		uint32_t gain, uint32_t line)
+		uint16_t gain, uint32_t line)
 {
 
 	uint32_t fl_lines;
