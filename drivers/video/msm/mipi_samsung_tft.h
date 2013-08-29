@@ -35,7 +35,7 @@
 //#include "smart_dimming.h"
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
-
+#endif
 enum mipi_samsung_cmd_list {
 
 	PANEL_READY_TO_ON,
