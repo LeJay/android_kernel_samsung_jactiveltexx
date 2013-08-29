@@ -493,7 +493,11 @@ static int polling_time_table[] = {
 	30,	/* CHARGING */
 	30,	/* DISCHARGING */
 	30,	/* NOT_CHARGING */
+#if defined(CONFIG_MACH_JACTIVE_EUR)
+	5 * 60,	/* SLEEP */
+#else
 	60 * 60,	/* SLEEP */
+#endif
 };
 
 #if defined(CONFIG_MACH_JF_ATT) || defined(CONFIG_MACH_JF_TMO) || \
