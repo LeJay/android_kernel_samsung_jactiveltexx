@@ -3797,6 +3797,9 @@ static struct platform_device *common_devices[] __initdata = {
 #ifdef CONFIG_ANDROID_RAM_CONSOLE
 	&ram_console_device,
 #endif
+#ifdef CONFIG_CAMERA_SW_I2C_ACT
+	&hvca_i2c_gpio_device,
+#endif
 };
 
 static struct platform_device *cdp_devices[] __initdata = {
@@ -3950,20 +3953,38 @@ static struct spi_board_info spi_board_info[] __initdata = {
 static int  es325_enable_VDD_CORE(void)
 {
 	static struct regulator *l18;
+	static struct regulator *l27;
 	int ret;
-
-	l18 = regulator_get(NULL, "8921_l18");
-	if (IS_ERR(l18)) {
-		pr_err("%s: error regulator_get\n", __func__);
-		return -1;
+	
+	if (system_rev <= 13 ) {
+		l18 = regulator_get(NULL, "8921_l18");
+		if (IS_ERR(l18)) {
+			pr_err("%s: error regulator_get\n", __func__);
+			return -1;
+		}
+		ret = regulator_set_voltage(l18, 1100000, 1100000);
+		if (ret)
+			pr_err("%s: error set voltage ret=%d\n", __func__, ret);
+		ret = regulator_enable(l18);
+		if (ret) {
+			pr_err("%s: error enable l18 ret=%d\n", __func__, ret);
+			return -1;
+		}
 	}
-	ret = regulator_set_voltage(l18, 1100000, 1100000);
-	if (ret)
-		pr_err("%s: error set voltage ret=%d\n", __func__, ret);
-	ret = regulator_enable(l18);
-	if (ret) {
-		pr_err("%s: error enable l18 ret=%d\n", __func__, ret);
-		return -1;
+	else {
+		l27 = regulator_get(NULL, "8921_l27");
+		if (IS_ERR(l27)) {
+			pr_err("%s: error regulator_get\n", __func__);
+			return -1;
+		}
+		ret = regulator_set_voltage(l27, 1100000, 1100000);
+		if (ret)
+			pr_err("%s: error set voltage ret=%d\n", __func__, ret);
+		ret = regulator_enable(l27);
+		if (ret) {
+			pr_err("%s: error enable l27 ret=%d\n", __func__, ret);
+			return -1;
+		}
 	}
 	return 0;
 }
